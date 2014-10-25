@@ -3,7 +3,7 @@
 
   + Supported Types (LOAD):
         mxCELL_CLASS      Y (Only read 1-dim cells. If dim. is more than 2, it force to read them as 1-dim.)
-        mxSTRUCT_CLASS
+        mxSTRUCT_CLASS    Y
         mxLOGICAL_CLASS
         mxCHAR_CLASS      Y
         mxDOUBLE_CLASS    Y
@@ -53,34 +53,77 @@
 
 static void readAndPushMxArray(lua_State *L, const mxArray* src);
 static void pushMxCellData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims);
+static void pushMxStructData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims);
 
+void pushMxStructData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims)
+{
+    mwSize numElements = mxGetNumberOfElements(src);
+    mwIndex index;
+    int numFields, fidx;
+    const char  *fname;
+    const mxArray *field_array_ptr;    
+    numFields = mxGetNumberOfFields(src);
+    
+    lua_newtable(L);
+    for(fidx=0; fidx<numFields; fidx++)
+    {
+        fname = mxGetFieldNameByNumber(src, fidx);    
+        lua_pushstring(L, fname);    // set field name as a key
+        if(numElements < 1)
+            lua_pushstring(L, "NULL");
+        else if(numElements == 1)
+        {
+            field_array_ptr = mxGetFieldByNumber(src, 0, fidx);
+            if(field_array_ptr == NULL)
+                lua_pushstring(L, "NULL");
+            else
+                readAndPushMxArray(L, field_array_ptr);
+        }else{
+            lua_newtable(L);
+            lua_pushstring(L, "Length");
+            lua_pushinteger(L, numElements);
+            lua_settable(L, -3);
+            for(index=0; index<numElements;    index++)
+            {
+                lua_pushinteger(L, index);
+                field_array_ptr = mxGetFieldByNumber(src, index, fidx);
+                if(field_array_ptr == NULL)
+                    lua_pushstring(L, "NULL");
+                else
+                readAndPushMxArray(L, field_array_ptr);
+                lua_settable(L, -3);
+            }
+        }        
+        lua_settable(L, -3);
+    }
+}
 
 void pushMxCellData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims)
 {
-	mwIndex index;
-	mwSize numElements = mxGetNumberOfElements(src);
+    mwIndex index;
+    mwSize numElements = mxGetNumberOfElements(src);
 
-	// Create sub-table and put Length
-	lua_newtable(L);
+    // Create sub-table and put Length
+    lua_newtable(L);
     lua_pushstring(L, "Length");
     lua_pushinteger(L, numElements);
-	lua_settable(L, -3);
-	// read Elements and push
-	for(index=0; index<numElements; index++)
-	{
-		const mxArray* element = mxGetCell(src, index);
-		lua_pushinteger(L, index);
-		if(element == NULL)
-			lua_pushstring(L, "NULL");
-		else
-			readAndPushMxArray(L, element);
-		lua_settable(L, -3);
-	}	
+    lua_settable(L, -3);
+    // read Elements and push
+    for(index=0; index<numElements; index++)
+    {
+        const mxArray* element = mxGetCell(src, index);
+        lua_pushinteger(L, index);
+        if(element == NULL)
+            lua_pushstring(L, "NULL");
+        else
+            readAndPushMxArray(L, element);
+        lua_settable(L, -3);
+    }    
 }
 
 
 void readAndPushMxArray(lua_State *L, const mxArray* src){
-	 // get dimensions
+     // get dimensions
     mwSize ndims = mxGetNumberOfDimensions(src);
     const mwSize *dims = mxGetDimensions(src);
 
@@ -147,9 +190,9 @@ void readAndPushMxArray(lua_State *L, const mxArray* src){
       luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ByteTensor"));
     }else {
       if ((mxGetClassID(src) == mxCELL_CLASS)) {
-		  pushMxCellData(L, src, ndims, dims);
+        pushMxCellData(L, src, ndims, dims);
       } else if ((mxGetClassID(src) == mxSTRUCT_CLASS)) {
-		  lua_pushstring(L, "unsupported type: mxSTRUCT_CLASS");
+        pushMxStructData(L, src, ndims, dims); 
       } else if ((mxGetClassID(src) == mxINT64_CLASS)) {
         lua_pushstring(L, "unsupported type: mxINT64_CLASS");
       } else if ((mxGetClassID(src) == mxUINT64_CLASS)) {
@@ -184,9 +227,9 @@ static int load_l(lua_State *L) {
     mxArray *pa = matGetNextVariable(file, &name);
     if (pa == NULL) break;
 
-	lua_pushstring(L, name);	// push varName
-	readAndPushMxArray(L, pa);	// push Data
-	lua_rawset(L, vars);		// Pop	[key - value] pair
+    lua_pushstring(L, name);    // push varName
+    readAndPushMxArray(L, pa);    // push Data
+    lua_rawset(L, vars);        // Pop    [key - value] pair
   
     mxDestroyArray(pa);
   }
