@@ -2,7 +2,7 @@
   + This is a wrapper for matlab std I/O functions
 
   + Supported Types (LOAD):
-        mxCELL_CLASS
+        mxCELL_CLASS      Y (Only read 1-dim cells. If dim. is more than 2, it force to read them as 1-dim.)
         mxSTRUCT_CLASS
         mxLOGICAL_CLASS
         mxCHAR_CLASS      Y
@@ -51,6 +51,118 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void readAndPushMxArray(lua_State *L, const mxArray* src);
+static void pushMxCellData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims);
+
+
+void pushMxCellData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims)
+{
+	mwIndex index;
+	mwSize numElements = mxGetNumberOfElements(src);
+
+	// Create sub-table and put Length
+	lua_newtable(L);
+    lua_pushstring(L, "Length");
+    lua_pushinteger(L, numElements);
+	lua_settable(L, -3);
+	// read Elements and push
+	for(index=0; index<numElements; index++)
+	{
+		const mxArray* element = mxGetCell(src, index);
+		lua_pushinteger(L, index);
+		if(element == NULL)
+			lua_pushstring(L, "NULL");
+		else
+			readAndPushMxArray(L, element);
+		lua_settable(L, -3);
+	}	
+}
+
+
+void readAndPushMxArray(lua_State *L, const mxArray* src){
+	 // get dimensions
+    mwSize ndims = mxGetNumberOfDimensions(src);
+    const mwSize *dims = mxGetDimensions(src);
+
+    // infer size and stride
+    int k;
+    THLongStorage *size = THLongStorage_newWithSize(ndims);
+    THLongStorage *stride = THLongStorage_newWithSize(ndims);
+    for (k=0; k<ndims; k++) {
+      THLongStorage_set(size, ndims-k-1, dims[k]);
+      if (k > 0)
+        THLongStorage_set(stride, ndims-k-1, dims[k-1]*THLongStorage_get(stride,ndims-k));
+      else
+        THLongStorage_set(stride, ndims-k-1, 1);
+    }
+     // depending on type, create equivalent Lua/torch data structure
+    if (mxGetClassID(src) == mxDOUBLE_CLASS) {
+      THDoubleTensor *tensor = THDoubleTensor_newWithSize(size, stride);
+      memcpy((void *)(THDoubleTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THDoubleTensor_nElement(tensor) * sizeof(double));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.DoubleTensor"));   
+
+    } else if (mxGetClassID(src) == mxSINGLE_CLASS) {
+      THFloatTensor *tensor = THFloatTensor_newWithSize(size, stride);
+      memcpy((void *)(THFloatTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THFloatTensor_nElement(tensor) * sizeof(float));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.FloatTensor"));
+
+    } else if (mxGetClassID(src) == mxINT32_CLASS) {
+      THIntTensor *tensor = THIntTensor_newWithSize(size, stride);
+      memcpy((void *)(THIntTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THIntTensor_nElement(tensor) * sizeof(int));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.IntTensor"));
+
+    } else if (mxGetClassID(src) == mxUINT32_CLASS) {
+      THIntTensor *tensor = THIntTensor_newWithSize(size, stride);
+      memcpy((void *)(THIntTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THIntTensor_nElement(tensor) * sizeof(int));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.IntTensor"));
+    } else if ((mxGetClassID(src) == mxINT16_CLASS)) {
+      THShortTensor *tensor = THShortTensor_newWithSize(size, stride);
+      memcpy((void *)(THShortTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THShortTensor_nElement(tensor) * sizeof(short));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ShortTensor"));
+
+    } else if ((mxGetClassID(src) == mxUINT16_CLASS)) {
+      THShortTensor *tensor = THShortTensor_newWithSize(size, stride);
+      memcpy((void *)(THShortTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THShortTensor_nElement(tensor) * sizeof(short));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ShortTensor"));
+    } else if ((mxGetClassID(src) == mxINT8_CLASS) || (mxGetClassID(src) == mxCHAR_CLASS)) {
+      THCharTensor *tensor = THCharTensor_newWithSize(size, stride);
+      memcpy((void *)(THCharTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THCharTensor_nElement(tensor) * sizeof(char));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.CharTensor"));
+    } else if ((mxGetClassID(src) == mxUINT8_CLASS)) {
+      THByteTensor *tensor = THByteTensor_newWithSize(size, stride);
+      memcpy((void *)(THByteTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THByteTensor_nElement(tensor) * sizeof(char));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ByteTensor"));
+    } else if ((mxGetClassID(src) == mxLOGICAL_CLASS)) {
+      THByteTensor *tensor = THByteTensor_newWithSize(size, stride);
+      memcpy((void *)(THByteTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THByteTensor_nElement(tensor) * sizeof(char));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ByteTensor"));
+    }else {
+      if ((mxGetClassID(src) == mxCELL_CLASS)) {
+		  pushMxCellData(L, src, ndims, dims);
+      } else if ((mxGetClassID(src) == mxSTRUCT_CLASS)) {
+		  lua_pushstring(L, "unsupported type: mxSTRUCT_CLASS");
+      } else if ((mxGetClassID(src) == mxINT64_CLASS)) {
+        lua_pushstring(L, "unsupported type: mxINT64_CLASS");
+      } else if ((mxGetClassID(src) == mxUINT64_CLASS)) {
+        lua_pushstring(L, "unsupported type: mxUINT64_CLASS");
+      } else if ((mxGetClassID(src) == mxFUNCTION_CLASS)) {
+        lua_pushstring(L, "unsupported type: mxFUNCTION_CLASS");
+      } else {
+        lua_pushstring(L, "unknown type");
+      }
+    }
+    
+}
+
 // Loader
 static int load_l(lua_State *L) {
   // get args
@@ -72,112 +184,10 @@ static int load_l(lua_State *L) {
     mxArray *pa = matGetNextVariable(file, &name);
     if (pa == NULL) break;
 
-    // get dimensions
-    mwSize ndims = mxGetNumberOfDimensions(pa);
-    const mwSize *dims = mxGetDimensions(pa);
-
-    // infer size and stride
-    int k;
-    THLongStorage *size = THLongStorage_newWithSize(ndims);
-    THLongStorage *stride = THLongStorage_newWithSize(ndims);
-    for (k=0; k<ndims; k++) {
-      THLongStorage_set(size, ndims-k-1, dims[k]);
-      if (k > 0)
-        THLongStorage_set(stride, ndims-k-1, dims[k-1]*THLongStorage_get(stride,ndims-k));
-      else
-        THLongStorage_set(stride, ndims-k-1, 1);
-    }
-
-    // depending on type, create equivalent Lua/torch data structure
-    if (mxGetClassID(pa) == mxDOUBLE_CLASS) {
-      THDoubleTensor *tensor = THDoubleTensor_newWithSize(size, stride);
-      memcpy((void *)(THDoubleTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THDoubleTensor_nElement(tensor) * sizeof(double));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.DoubleTensor"));
-      lua_rawset(L, vars);
-
-    } else if (mxGetClassID(pa) == mxSINGLE_CLASS) {
-      THFloatTensor *tensor = THFloatTensor_newWithSize(size, stride);
-      memcpy((void *)(THFloatTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THFloatTensor_nElement(tensor) * sizeof(float));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.FloatTensor"));
-      lua_rawset(L, vars);
-
-    } else if (mxGetClassID(pa) == mxINT32_CLASS) {
-      THIntTensor *tensor = THIntTensor_newWithSize(size, stride);
-      memcpy((void *)(THIntTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THIntTensor_nElement(tensor) * sizeof(int));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.IntTensor"));
-      lua_rawset(L, vars);
-
-    } else if (mxGetClassID(pa) == mxUINT32_CLASS) {
-      THIntTensor *tensor = THIntTensor_newWithSize(size, stride);
-      memcpy((void *)(THIntTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THIntTensor_nElement(tensor) * sizeof(int));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.IntTensor"));
-      lua_rawset(L, vars);
-
-    } else if ((mxGetClassID(pa) == mxINT16_CLASS)) {
-      THShortTensor *tensor = THShortTensor_newWithSize(size, stride);
-      memcpy((void *)(THShortTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THShortTensor_nElement(tensor) * sizeof(short));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ShortTensor"));
-      lua_rawset(L, vars);
-
-    } else if ((mxGetClassID(pa) == mxUINT16_CLASS)) {
-      THShortTensor *tensor = THShortTensor_newWithSize(size, stride);
-      memcpy((void *)(THShortTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THShortTensor_nElement(tensor) * sizeof(short));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ShortTensor"));
-      lua_rawset(L, vars);
-
-    } else if ((mxGetClassID(pa) == mxINT8_CLASS) || (mxGetClassID(pa) == mxCHAR_CLASS)) {
-      THCharTensor *tensor = THCharTensor_newWithSize(size, stride);
-      memcpy((void *)(THCharTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THCharTensor_nElement(tensor) * sizeof(char));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.CharTensor"));
-      lua_rawset(L, vars);
-
-    } else if ((mxGetClassID(pa) == mxUINT8_CLASS)) {
-      THByteTensor *tensor = THByteTensor_newWithSize(size, stride);
-      memcpy((void *)(THByteTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THByteTensor_nElement(tensor) * sizeof(char));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ByteTensor"));
-      lua_rawset(L, vars);
-
-    } else if ((mxGetClassID(pa) == mxLOGICAL_CLASS)) {
-      THByteTensor *tensor = THByteTensor_newWithSize(size, stride);
-      memcpy((void *)(THByteTensor_data(tensor)),
-             (void *)(mxGetPr(pa)), THByteTensor_nElement(tensor) * sizeof(char));
-      lua_pushstring(L, name);
-      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ByteTensor"));
-      lua_rawset(L, vars);
-
-    } else {
-      lua_pushstring(L, name);
-      if ((mxGetClassID(pa) == mxCELL_CLASS)) {
-        lua_pushstring(L, "unsupported type: mxCELL_CLASS");
-      } else if ((mxGetClassID(pa) == mxSTRUCT_CLASS)) {
-        lua_pushstring(L, "unsupported type: mxSTRUCT_CLASS");
-      } else if ((mxGetClassID(pa) == mxINT64_CLASS)) {
-        lua_pushstring(L, "unsupported type: mxINT64_CLASS");
-      } else if ((mxGetClassID(pa) == mxUINT64_CLASS)) {
-        lua_pushstring(L, "unsupported type: mxUINT64_CLASS");
-      } else if ((mxGetClassID(pa) == mxFUNCTION_CLASS)) {
-        lua_pushstring(L, "unsupported type: mxFUNCTION_CLASS");
-      } else {
-        lua_pushstring(L, "unknown type");
-      }
-      lua_rawset(L, vars);
-    }
+	lua_pushstring(L, name);	// push varName
+	readAndPushMxArray(L, pa);	// push Data
+	lua_rawset(L, vars);		// Pop	[key - value] pair
+  
     mxDestroyArray(pa);
   }
 
