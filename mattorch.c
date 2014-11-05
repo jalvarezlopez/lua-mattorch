@@ -173,7 +173,12 @@ void readAndPushMxArray(lua_State *L, const mxArray* src){
       memcpy((void *)(THShortTensor_data(tensor)),
              (void *)(mxGetPr(src)), THShortTensor_nElement(tensor) * sizeof(short));
       luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.ShortTensor"));
-    } else if ((mxGetClassID(src) == mxINT8_CLASS) || (mxGetClassID(src) == mxCHAR_CLASS)) {
+    } else if (mxGetClassID(src) == mxINT8_CLASS) {
+      THCharTensor *tensor = THCharTensor_newWithSize(size, stride);
+      memcpy((void *)(THCharTensor_data(tensor)),
+             (void *)(mxGetPr(src)), THCharTensor_nElement(tensor) * sizeof(char));
+      luaT_pushudata(L, tensor, luaT_checktypename2id(L, "torch.CharTensor"));
+	} else if (mxGetClassID(src) == mxCHAR_CLASS) {
       mwSize numElements = mxGetNumberOfElements(src);
       char* tmpStr = (char*)calloc(numElements+1, sizeof(char));
       mxGetString(src, tmpStr, (numElements+1) * sizeof(char));
