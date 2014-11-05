@@ -112,7 +112,8 @@ void pushMxCellData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize
     for(index=0; index<numElements; index++)
     {
         const mxArray* element = mxGetCell(src, index);
-        lua_pushinteger(L, index);
+		// revisied: index starts from 1
+        lua_pushinteger(L, (index+1));
         if(element == NULL)
             lua_pushstring(L, "NULL");
         else
