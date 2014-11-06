@@ -85,7 +85,7 @@ void pushMxStructData(lua_State *L, const mxArray* src, mwSize ndims, const mwSi
             lua_settable(L, -3);
             for(index=0; index<numElements;    index++)
             {
-                lua_pushinteger(L, index);
+                lua_pushinteger(L, (index+1));
                 field_array_ptr = mxGetFieldByNumber(src, index, fidx);
                 if(field_array_ptr == NULL)
                     lua_pushstring(L, "NULL");
