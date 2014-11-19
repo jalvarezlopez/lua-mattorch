@@ -73,25 +73,20 @@ mattorch.save = function(path,vars)
                  if not path or not vars then
                     xlua.error('please provide a path','mattorch.save',help.save)
                  end
-                 if type(vars) == 'userdata' and torch.typename(vars) == 'torch.DoubleTensor' then
-                    local tensor = torch.Tensor():resizeAs(vars):copy(vars)
-                    libmattorch.saveTensor(path,tensor)
-
-                 elseif type(vars) == 'table' then
-                    for i,v in ipairs(vars) do
+				 if type(vars) == 'table' then
+					 for i,v in ipairs(vars) do
                        if v then
                           xlua.error('can only export table of named variables, e.g. {x=..., y=...}',
                                      'mattorch.save',help.save) 
                        end
                     end
-                    for _,v in pairs(vars) do
-                       if type(v) ~= 'userdata' or torch.typename(v) ~= 'torch.DoubleTensor' then 
-                          xlua.error('can only export table of torch.DoubleTensor',
-                                     'mattorch.save',help.save)
-                       end
-                    end
-                    libmattorch.saveTable(path,vars)
-
+					 libmattorch.saveTable(path,vars)
+				 elseif type(vars) == 'userdata' and (torch.typename(vars) == 'torch.DoubleTensor' or torch.typename(vars) == 'torch.FloatTensor' ) then
+                    local tensor = torch.Tensor():resizeAs(vars):copy(vars)
+                    libmattorch.saveTensor(path,tensor)
+                 
+				 elseif type(vars) == 'number' or type(vars) == 'boolean' or type(vars) == 'string' then
+					 libmattorch.saveTensor(path,vars)
                  else
                     xlua.error('cannot export given variables','mattorch.save',help.save)
                  end
