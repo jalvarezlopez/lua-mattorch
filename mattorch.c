@@ -25,7 +25,8 @@
         LUA_TSTRING         -> mxCHAR_CLASS
         torch.DoubleTensor  -> mxDOUBLE_CLASS
         torch.FloatTensor   -> mxSINGLE_CLASS
-        LUA_TTABLE          -> mxCELL_CLASS
+        LUA_TTABLE          -> mxSTRUCT_CLASS
+        LUA_TTABLE{array}   -> mxCELL_CLASS
 */
 
 // To load this lib in LUA:
@@ -41,11 +42,126 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+typedef struct S_ARRAY_ITEM{
+	struct S_ARRAY_ITEM* perv;
+	struct S_ARRAY_ITEM* next;
+	uint32_t idx;
+	mxArray* value;
+} T_ARRAY_ITEM;
+
+typedef  struct S_ARRAY{
+	struct S_ARRAY_ITEM* first;
+	struct S_ARRAY_ITEM* last;
+	uint32_t numOfItem;
+	uint32_t maxIdxValue;
+}T_ARRAY;
+
 static void readAndPushMxArray(lua_State *L, const mxArray* src);
 static void pushMxCellData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims);
 static void pushMxStructData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims);
-
 static mxArray* assignData(lua_State *L, int pos);
+
+//---------------- functions for T_ARRAY & T_ARRAY_ITEM --------------------
+T_ARRAY_ITEM* constractT_ARRAY_ITEM(void);
+void distoryT_ARRAY_ITEM(T_ARRAY_ITEM* trg);
+T_ARRAY* constractT_ARRAY(void);
+void distoryT_ARRAY(T_ARRAY* trg);
+void addT_ARRAY_item(T_ARRAY* trg, uint32_t idx, mxArray* value);
+
+T_ARRAY_ITEM* constractT_ARRAY_ITEM(void)
+{
+	T_ARRAY_ITEM* trg = (T_ARRAY_ITEM*)malloc(sizeof(T_ARRAY_ITEM));
+	trg->idx = 0;
+	trg->value = NULL;
+	trg->perv = NULL;
+	trg->next = NULL;
+	return trg;
+}
+void distoryT_ARRAY_ITEM(T_ARRAY_ITEM* trg)
+{
+	if(trg->perv != NULL)
+		trg->perv->next = NULL;
+	if(trg->next != NULL)
+		trg->next->perv = NULL;
+	if(trg->value != NULL)
+		mxDestroyArray(trg->value);
+	free(trg);
+}
+T_ARRAY* constractT_ARRAY(void)
+{
+	T_ARRAY* trg = (T_ARRAY*)malloc(sizeof(T_ARRAY));
+	trg->first = NULL;
+	trg->last = NULL;
+	trg->numOfItem = 0;
+	trg->maxIdxValue = 0;
+	return trg;
+}
+void distoryT_ARRAY(T_ARRAY* trg)
+{
+	T_ARRAY_ITEM* next = NULL;
+	T_ARRAY_ITEM* curr = trg->first;
+	while(curr != NULL)
+	{
+		next = curr->next;
+		distoryT_ARRAY_ITEM(curr);		
+		curr = next;
+	}
+	free(trg);
+}
+void addT_ARRAY_item(T_ARRAY* trg, uint32_t idx, mxArray* value)
+{
+	T_ARRAY_ITEM* last = trg->last;
+	T_ARRAY_ITEM* curr = constractT_ARRAY_ITEM();
+// 	printf("addT_ARRAY_item @ par:%p, last:%p, curr:%p\n", trg, last, curr);
+	curr->idx = idx;
+	curr->value = value;
+	curr->perv = last;
+	trg->last = curr;
+	if(last != NULL)
+		last->next = curr;
+	if(trg->first == NULL)
+		trg->first = curr;
+	if(trg->maxIdxValue < curr->idx)
+		trg->maxIdxValue = curr->idx;
+	(trg->numOfItem)++;
+// 	printf(" >> first: %p last :%p maxIdxValue : %u, numOfItem : %u\n", trg->first,
+// 	trg->last, trg->maxIdxValue, trg->numOfItem);
+}
+
+//-----------------------------------------------------------
+
+static void stackDump (lua_State *L, const char* prefix) {
+	int i;
+	int top = lua_gettop(L);
+	printf("----------------- stack --------------------------\n %s> ",prefix);
+	for (i = 1; i <= top; i++) {  /* repeat for each level */
+		int t = lua_type(L, i);
+		switch (t) {
+
+			case LUA_TSTRING:  /* strings */
+			printf("`%s'", lua_tostring(L, i));
+			break;
+
+			case LUA_TBOOLEAN:  /* booleans */
+			printf(lua_toboolean(L, i) ? "true" : "false");
+			break;
+
+			case LUA_TNUMBER:  /* numbers */
+			printf("%g", lua_tonumber(L, i));
+			break;
+
+			default:  /* other values */
+			printf("%s", lua_typename(L, t));
+			break;
+
+		}
+		printf("  ");  /* put a separator */
+	}
+	printf("\n");  /* end the listing */
+	printf("--------------------------------------------------\n");
+}
+    
 
 void pushMxStructData(lua_State *L, const mxArray* src, mwSize ndims, const mwSize *dims)
 {
@@ -280,29 +396,63 @@ static mxArray* assignData(lua_State *L, int pos)
 		}
 		case LUA_TTABLE:
 		{
-			mwSize dims[2] = {1, 1};
-
-			lua_pushvalue(L, pos);
-			lua_pushnil(L);  // first key
+			mwSize dims[2] = {1, 1};			
+			T_ARRAY* array = constractT_ARRAY();			
+// 			lua_pushvalue(L, pos);
+			lua_pushnil(L);  // first key			
 			out = mxCreateStructArray(2, dims, 0, NULL);
 			while (lua_next(L, -2) != 0) {
-				const char* name = lua_tostring(L,-2);
-				mxArray* data = assignData(L, -1);
-// 				printf("  + %s: <%d> (%s)\n", name, lua_type(L, -1),   luaT_typename(L, -1));
-	
+				const char* name = NULL;
+				mxArray* data = NULL;
+				uint32_t name_idx = 0;
+				char tmpStr[100] = {0};
+				if(lua_type(L, -2) == LUA_TNUMBER)
+				{
+					name_idx = (uint32_t)lua_tonumber(L, -2);
+					sprintf(tmpStr, "%u", name_idx);
+					name = tmpStr;
+				}else{
+					name = lua_tostring(L,-2);
+					name_idx = atoi(name);
+				}
+				
+				data = assignData(L, -1);
 				if(data == NULL)
 				{
 					printf("[mattorch.save] WARNING: '%s' is ignored as it is UNSUPPORTED TYPE\n", name);
-				}else{
-					int fieldNum = mxAddField(out, name);
-// 					printf(" >> setField (%s) : %d\n", name, fieldNum);
-					if(fieldNum >= 0)					
-						mxSetFieldByNumber(out, 0, fieldNum, data);	
+				}else{					
+					if(name[0] >= '0' && name[0] <= '9')
+					{
+						addT_ARRAY_item(array, name_idx, data);
+					}else{
+						int fieldNum = mxAddField(out, name);
+						if(fieldNum >= 0)
+							mxSetFieldByNumber(out, 0, fieldNum, data);	
+					}
 				}
-				
 				lua_pop(L, 1);
 			 }
-			 lua_pop(L, 1);
+// 			 lua_pop(L, 1);
+			// add array elements			
+			if(array->numOfItem > 0)
+			{
+				mwSize nDim[2] = {1, 1};
+				mxArray* cell = NULL;
+				T_ARRAY_ITEM* pt = array->first;
+				int fieldNum = mxAddField(out, "array");
+				nDim[1] = array->numOfItem;
+				cell = mxCreateCellArray(2, nDim);
+				while(pt != NULL)
+				{
+					mxSetCell(cell, (pt->idx)-1, mxDuplicateArray(pt->value));
+					pt = pt->next;
+				}
+				
+				if(fieldNum >= 0)					
+					mxSetFieldByNumber(out, 0, fieldNum, cell);	
+			}
+			
+			distoryT_ARRAY(array);
 
 			break;
 		}
@@ -384,23 +534,61 @@ static int save_table_l(lua_State *L) {
   mxArray **pms;
   pms = (mxArray**) malloc(sizeof(mxArray*)*1024);
   int counter = 0;
+  
+  T_ARRAY* array = constractT_ARRAY();
+  
   // table is in the stack at index 2 (2nd var)
   lua_pushnil(L);  // first key
   while (lua_next(L, 2) != 0) {
     // uses 'key' (at index -2) and 'value' (at index -1)
     const char *name = lua_tostring(L,-2);
-	mxArray* pm = NULL;
+	mxArray* pm = NULL;	
+	uint32_t name_idx = 0;
+	char tmpStr[100] = {0};
+	if(lua_type(L, -2) == LUA_TNUMBER)
+	{
+		name_idx = (uint32_t)lua_tonumber(L, -2);
+		sprintf(tmpStr, "%u", name_idx);
+		name = tmpStr;
+	}else{
+		name = lua_tostring(L,-2);
+		name_idx = atoi(name);
+	}
+// 	uint32_t name_idx = atoi(name);
 // 	printf("+ %s: <%d>(%s) (%s)\n", name, lua_type(L, -1), lua_typename(L, -1),  luaT_typename(L, -1));
-	pm = assignData(L, -1);
+	
+	pm = assignData(L, -1);	
+	
 	if(pm != NULL)
 	{
-		pms[counter++] = pm;
-		matPutVariable(file, name, pm);
+		if(name[0] >= '0' && name[0] <= '9')
+		{
+			addT_ARRAY_item(array, name_idx, pm);
+		}else{
+			pms[counter++] = pm;
+			matPutVariable(file, name, pm);
+		}
 	}else
 		printf("[mattorch.save] WARNING: '%s' is ignored as it is UNSUPPORTED TYPE\n", name);
     // removes 'value'; keeps 'key' for next iteration
     lua_pop(L, 1);
   }
+  // add array elements
+  if(array->numOfItem > 0)
+  {
+	  mwSize nDim[2] = {1, 1};
+	  mxArray* cell = NULL;
+	  T_ARRAY_ITEM* pt = array->first;
+	  nDim[1] = array->numOfItem;
+	  cell = mxCreateCellArray(2, nDim);
+	  while(pt != NULL)
+	  {
+		  mxSetCell(cell, (pt->idx)-1, mxDuplicateArray(pt->value));
+		  pt = pt->next;
+	  }
+	  matPutVariable(file, "array", cell);
+  }
+  distoryT_ARRAY(array);
   int i = 0;
   for(i=0; i<counter;i++)
     mxDestroyArray(pms[i]);
